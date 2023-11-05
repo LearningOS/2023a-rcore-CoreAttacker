@@ -2,7 +2,10 @@
 use crate::{
     config::MAX_SYSCALL_NUM,
     task::{exit_current_and_run_next, suspend_current_and_run_next, TaskStatus},
-    timer::get_time_us,
+    timer::{get_time_us},
+
+    //实现sys_task_info新引入的方法
+    task::{get_task_status},
 };
 
 #[repr(C)]
@@ -53,5 +56,13 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
 /// YOUR JOB: Finish sys_task_info to pass testcases
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
     trace!("kernel: sys_task_info");
-    -1
+    let (x, y, z) = get_task_status();
+    unsafe {
+        *_ti = TaskInfo {
+            status: x,
+            syscall_times: z,
+            time: y,
+        };
+    }
+    0
 }

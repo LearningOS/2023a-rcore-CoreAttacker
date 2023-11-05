@@ -19,6 +19,7 @@ use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
 use lazy_static::*;
 use switch::__switch;
+use crate::timer::get_time_ms;
 pub use task::{TaskControlBlock, TaskStatus};
 
 pub use context::TaskContext;
@@ -47,13 +48,15 @@ pub struct TaskManagerInner {
     current_task: usize,
 }
 
-lazy_static! {
-    /// Global variable: TASK_MANAGER
+lazy_static! {  //这个宏定义全局变量
+    /// Global variable: TASK_MANAGER, 供下面的方法使用
     pub static ref TASK_MANAGER: TaskManager = {
         let num_app = get_num_app();
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
+            task_time: 0,
+            task_sys_count: [0; crate::config::MAX_SYSCALL_NUM],
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
@@ -80,6 +83,7 @@ impl TaskManager {
         let mut inner = self.inner.exclusive_access();
         let task0 = &mut inner.tasks[0];
         task0.task_status = TaskStatus::Running;
+        task0.task_time = get_time_ms();
         let next_task_cx_ptr = &task0.task_cx as *const TaskContext;
         drop(inner);
         let mut _unused = TaskContext::zero_init();
@@ -88,6 +92,7 @@ impl TaskManager {
             __switch(&mut _unused as *mut TaskContext, next_task_cx_ptr);
         }
         panic!("unreachable in run_first_task!");
+        
     }
 
     /// Change the status of current `Running` task into `Ready`.
@@ -122,6 +127,7 @@ impl TaskManager {
             let mut inner = self.inner.exclusive_access();
             let current = inner.current_task;
             inner.tasks[next].task_status = TaskStatus::Running;
+            inner.tasks[next].task_time = get_time_ms();
             inner.current_task = next;
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
@@ -134,6 +140,19 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+
+    //返回当前任务的状态、时间
+    fn get_task_status(&self) -> (TaskStatus, usize, [u32; crate::config::MAX_SYSCALL_NUM]) {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        return (inner.tasks[current].task_status, inner.tasks[current].task_time, inner.tasks[current].task_sys_count);
+    }
+
+    fn add_sys_count(&self, id:usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].task_sys_count[id] += 1;
     }
 }
 
@@ -168,4 +187,15 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// 返回当前任务的状态
+pub fn get_task_status() -> (TaskStatus, usize, [u32; crate::config::MAX_SYSCALL_NUM]) {
+    let s = TASK_MANAGER.get_task_status();
+    return s;
+}
+
+/// xxx
+pub fn add_sys_count(id: usize) {
+    TASK_MANAGER.add_sys_count(id);
 }
